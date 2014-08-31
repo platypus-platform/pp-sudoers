@@ -19,7 +19,7 @@ var _ = Describe("Writing sudoers", func() {
 
 		config := SudoersConfig{Path: basedir}
 
-		err := writeSudoers(config, "testapp", []string{"xavier, donalias"})
+		err := writeSudoersForApp(config, "testapp", []string{"xavier, donalias"})
 
 		expectedFile := path.Join(basedir, "pp-testapp")
 
@@ -39,7 +39,7 @@ var _ = Describe("Writing sudoers", func() {
 
 		config := SudoersConfig{Path: basedir}
 
-		err := writeSudoers(config, "testapp", []string{"$%$%$((%$"})
+		err := writeSudoersForApp(config, "testapp", []string{"$%$%$((%$"})
 
 		Expect(err).To(BeNil())
 
@@ -68,7 +68,7 @@ var _ = Describe("Writing sudoers", func() {
 
 		s1, _ := os.Stat(expectedFile)
 
-		err := writeSudoers(config, "testapp", []string{"xavier"})
+		err := writeSudoersForApp(config, "testapp", []string{"xavier"})
 
 		s2, _ := os.Stat(expectedFile)
 
@@ -89,13 +89,44 @@ var _ = Describe("Writing sudoers", func() {
 		expectedFile := path.Join(basedir, "pp-testapp")
 		ioutil.WriteFile(expectedFile, []byte("don ALL = (testapp) ALL"), 0440)
 
-		err := writeSudoers(config, "testapp", []string{"xavier"})
+		err := writeSudoersForApp(config, "testapp", []string{"xavier"})
 
 		contents, err := ioutil.ReadFile(expectedFile)
 
 		Expect(err).To(BeNil())
 		Expect(string(contents)).To(Equal("xavier ALL = (testapp) ALL"))
 
+	})
+
+	It("Removes unexpected sudoers files", func() {
+		basedir := tempDir()
+		defer os.RemoveAll(basedir)
+
+		config := SudoersConfig{Path: basedir}
+
+		expectedFile := path.Join(basedir, "pp-testapp")
+		extraFile := path.Join(basedir, "pp-nope")
+		ioutil.WriteFile(extraFile, []byte(""), 0440)
+		ignoreFile := path.Join(basedir, "ignore")
+		ioutil.WriteFile(ignoreFile, []byte(""), 0440)
+
+		spec := []Sudoers{
+			Sudoers{App: "testapp", Owners: []string{"xavier"}},
+		}
+
+		writeSudoers(config, spec)
+
+		if _, err := os.Stat(expectedFile); os.IsNotExist(err) {
+			Fail("Expected file was removed")
+		}
+
+		if _, err := os.Stat(extraFile); !os.IsNotExist(err) {
+			Fail("Extra file was not removed")
+		}
+
+		if _, err := os.Stat(ignoreFile); os.IsNotExist(err) {
+			Fail("Ignored file was removed")
+		}
 	})
 })
 

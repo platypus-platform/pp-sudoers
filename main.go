@@ -16,6 +16,11 @@ type SudoersConfig struct {
 	Path string
 }
 
+type Sudoers struct {
+	App    string
+	Owners []string
+}
+
 func main() {
 	hostname, err := os.Hostname()
 	if err != nil {
@@ -30,17 +35,19 @@ func main() {
 	flag.Parse()
 
 	err = pp.PollIntent(hostname, func(intent pp.IntentNode) {
+		spec := []Sudoers{}
+
 		for _, app := range intent.Apps {
 			owners, err := pp.FetchOwners(app.Name)
 			if err != nil {
 				logger.Fatal("%s: could not fetch ownership data: %s", app.Name, err)
+				continue
 			}
 
-			if err := writeSudoers(config, app.Name, owners.Users); err != nil {
-				logger.Fatal("%s: error writing sudoers: %s", app.Name, err)
-			}
+			spec = append(spec, Sudoers{App: app.Name, Owners: owners.Users})
 		}
-		// TODO: Remove old definitions
+
+		writeSudoers(config, spec)
 	})
 
 	if err != nil {
@@ -49,7 +56,40 @@ func main() {
 	}
 }
 
-func writeSudoers(config SudoersConfig, appName string, owners []string) error {
+func writeSudoers(config SudoersConfig, spec []Sudoers) {
+	actual := []string{}
+	expected := []string{}
+	files, err := ioutil.ReadDir(config.Path)
+	if err != nil {
+		logger.Fatal("could not read existing files: %s", err)
+		return
+	}
+	for _, file := range files {
+		if strings.HasPrefix(file.Name(), "pp-") {
+			actual = append(actual, file.Name())
+		}
+	}
+
+	for _, sudoers := range spec {
+		appName := sudoers.App
+		owners := sudoers.Owners
+
+		if err := writeSudoersForApp(config, appName, owners); err != nil {
+			logger.Fatal("%s: error writing sudoers: %s", appName, err)
+		}
+		expected = append(expected, "pp-"+appName)
+	}
+
+	for _, file := range subtract(actual, expected) {
+		logger.Info("removing unexepected file: %s", file)
+
+		if err := os.Remove(path.Join(config.Path, file)); err != nil {
+			logger.Fatal("%s", err)
+		}
+	}
+}
+
+func writeSudoersForApp(config SudoersConfig, appName string, owners []string) error {
 	fpath := path.Join(config.Path, "pp-"+appName)
 	fcontent := fmt.Sprintf("%s ALL = (%s) ALL",
 		strings.Join(owners, ", "),
@@ -116,4 +156,22 @@ func writeFileWithValidation(
 	}
 
 	return true, nil
+}
+
+func subtract(slice1 []string, slice2 []string) []string {
+	diffStr := []string{}
+	m := map[string]int{}
+
+	for _, s1Val := range slice1 {
+		m[s1Val] = 1
+	}
+	for _, s2Val := range slice2 {
+		delete(m, s2Val)
+	}
+
+	for mKey, _ := range m {
+		diffStr = append(diffStr, mKey)
+	}
+
+	return diffStr
 }
